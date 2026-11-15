@@ -1,0 +1,20 @@
+.history
+
+# Python cache
+__pycache__/
+*.py[cod]
+
+# Editor / agent backups and scratch files
+*.bak
+*.tmp
+
+# Gated match data (see DATA.md) - never commit
+data/*
+!data/README.md
+*.mp4
+
+# Superseded / unverified outputs (all-X predictions from the first attempt)
+predictions.csv
+results/enhanced_classifier_submission.csv
+broadcast_results.csv
+tactical_results.csv
