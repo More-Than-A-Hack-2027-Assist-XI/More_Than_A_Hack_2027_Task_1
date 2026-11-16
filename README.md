@@ -1,194 +1,159 @@
-# More than a Hack 2027 — Phase 1: Ball Possession
+# Ball Possession Classifier
 
-**Organised by [Metrica Sports](https://metrica-sports.com), [FC Barcelona](https://www.fcbarcelona.com)
-and the [Mobile World Capital Barcelona](https://www.mwcbarcelona.com)**, at the Talent Arena in Barcelona.
+Reads the player and ball tracking of one football match and decides, **frame by frame, which
+team is closest to the ball**. The result is a `frame,label` CSV. A separate video player shows
+those labels on top of the match video so you can check them by eye.
 
-A football data challenge on real professional match data, open to analysts, data scientists and
-engineers. You are given one complete LaLiga match — two camera feeds, automatic tracking of every
-player and the ball, automatic tactical tagging, and the camera-to-pitch geometry — and one
-question to answer with it.
+It is rule-based: no training, no labelled data, no GPU. It works on any match whose tracking is
+in the format below, whatever the file and folder names are.
 
----
-
-## The task
-
-**For every frame of the match, say who has the ball.**
-
-```
-frame,label
-11185,A        away in possession, ball alive
-11186,A
-...
-18240,D        dead ball
-...
-18684,H        home in possession, ball alive
-```
-
-That is the whole task. One CSV, one row per video frame, 199,319 rows. It is scored automatically
-against a private frame-by-frame ground truth, so there is a number at the end and no argument
-about it — no jury, and no presentation to argue from.
-
-The tracking is automatic and uncorrected: it has gaps and identity
-switches, and the ball itself is invisible on 41% of the frames you are scored on.
+A full description of the program, including every error case, is in
+[Project_Report.pdf](Project_Report.pdf).
 
 ---
 
-## The challenge in one screen
+## Quick start
 
-| |                                                                                                                           |
-|---|---------------------------------------------------------------------------------------------------------------------------|
-| **Input** | one full match: tactical video, broadcast video, automatic tracking **with the ball** for both, Smart Tagging, homography |
-| **Output** | `frame,label` CSV, 199,319 rows, labels `H` / `A` / `D` / `X`                                                             |
-| **Ranked on** | `spellF1` — how many of the match's real possessions you recovered as whole possessions                                   |
-| **Also reported** | `macroF1` — the per-frame view, and the first tie-break                                                                   |
-| **Baseline to beat** | `spellF1` **0.2433**, in this repository                                                                                  |
-| **Ground truth you get** | the first **5 minutes** of play — to check your pipeline, not to train on                                              |
-| **Ground truth you are scored on** | the full match, **private**                                                                                               |
-
-It is deliberately **not** a tracking challenge. The tracking, tagging and homography are given to
-you so that nobody has to rebuild detection, re-identification and camera calibration before
-getting to the actual question. See [CHALLENGE.md](CHALLENGE.md).
-
----
-
-## Try it right now
-
-The scorer, a 5-minute ground truth and four working baselines are in this repository. No
-enrolment, no download, no data:
+Requirements: Python 3 with `numpy` and `pandas`. The video player also needs `opencv-python`
+and Tkinter (included with standard Python on Windows).
 
 ```bash
-pip install -r requirements.txt
-python evaluation/run_evaluation.py
+# Classify one match folder
+python main.py --device cpu --data-dir <folder> --output <file.csv>
+
+# Watch the labels on the video
+python video_player.py <video.mp4> <file.csv> [--max-width 1280]
+
+# Run the regression tests
+python -m unittest test_generic_inputs -v
 ```
 
-Scored on the public 5 minutes, not on the full match -- which is why the order below is not the
-order of the floor quoted above:
-
-```
-scoreboard  gt/BAR-ATH_possession_gt_public.csv  199319 frames  7500 graded  21 gt segments
-ground truth has 17 possessions of mean 14.2 s  <- compare the poss and dur columns
-
-rank  submission                macroF1  spellF1   poss     dur  
-----  ------------------------  -------  -------  -----  ------  
-   1  baseline_smooth125         0.5812   0.4242     16    18.5  
-   2  baseline_smooth50          0.6207   0.3256     26    10.8  
-   3  baseline_smooth25          0.6200   0.2868     36     7.6  
-   4  baseline_raw               0.5972   0.0378    131     2.0  
-```
-
-Those four are **the same algorithm four times** — nearest tracked player to the ball, then a
-majority vote over a window. Only the window changes. `macroF1` barely moves; `spellF1` moves by a
-factor of eleven. That disagreement is the whole point of the metric, and
-[EVALUATION.md](EVALUATION.md) explains it.
-
-Once you have the data, regenerate them yourself and go further:
-
-```bash
-python starter/baseline.py                              # rebuild the four baselines
-python evaluation/validate_submission.py <your>.csv     # before every submission
-```
-
-**Validate every file before you submit it.** `validate_submission.py` runs exactly the checks the
-official scorer runs, and a file that fails them is dropped from the board with a one-line reason.
-It takes two seconds and it is the single most common way a good entry scores nothing.
+The output folder must already exist.
 
 ---
 
-## Getting the data
+## What is in this project
 
-The match assets are released to enrolled participants who have accepted the terms of use.
-
-1. Enrol: **[More than A Hack 2027](https://landing.mobileworldcapital.com/more-than-a-hack-2027)**
-2. Read and sign the terms and conditions in the registration form
-3. You receive a download link.
-4. Unpack it into `./data`, or point `MTAH_DATA_DIR` at wherever you put it.
-
-Full description of every asset and how the frames line up: **[DATA.md](DATA.md)**.
-
----
-
-## Read these, in this order
-
-| | |
+| File | What it does |
 |---|---|
-| **[CHALLENGE.md](CHALLENGE.md)** | the problem, the four labels, what counts as possession |
-| **[DATA.md](DATA.md)** | every provided asset, its format, and the frame alignment |
-| **[EVALUATION.md](EVALUATION.md)** | how you are scored, and why — read before optimising anything |
-| **[SUBMISSION.md](SUBMISSION.md)** | the file contract, the three deliverables, how to submit |
-| **[RULES.md](RULES.md)** | what you may and may not do |
-| **[FAQ.md](FAQ.md)** | |
-| **[OVERVIEW.md](OVERVIEW.md)** | the competition as a whole — context, why the 2027 format changed, the calendar |
-
+| `main.py` | Command-line entry point. Finds the input files, loads them, classifies every frame and writes the CSV. |
+| `src/enhanced_classifier.py` | The engine: tracking parser, team mapping, decision rule and CSV checks. Can also be imported as a library. |
+| `video_player.py` | Desktop player that shows each frame's label over the video, with seeking and frame stepping. |
+| `test_generic_inputs.py` | 8 regression tests on small synthetic inputs. |
+| `diagnostic_supervised.py` | Self-check against an independent re-parse of a real tracking file. Written for one specific data file. |
+| `Project_Report.pdf` | Detailed capability report. |
 
 ---
 
-## What is in this repository
+## Input
 
+The data folder must contain **exactly one** `*_atd.txt` file and, next to it, an `.xml` file
+with the same name stem (for example `anything_atd.txt` + `anything_atd.xml`). Only the top level
+of the folder is searched. Other files in the folder are ignored.
+
+**Tracking file (`*_atd.txt`)**: one line per frame, `frame:players:ball`.
+
+- `players` is a `;`-separated list of player slots, in the same order and number as the players
+  in the XML.
+- Each player and the ball are written as `x,y,speed`, with `x` and `y` as normalised pitch
+  coordinates. `NaN` means the object is not visible.
+- Frame numbers start at 1. Lines may come in any order and may have gaps, but must not repeat.
+
+**Metadata file (`*_atd.xml`)**: exactly two `<Team id="…">` elements, where the first becomes
+**H** (home) and the second becomes **A** (away). It also needs one `<Player id="…" teamId="…">`
+per tracking slot, in slot order.
+
+---
+
+## How a frame is labelled
+
+Every frame is decided on its own:
+
+| Situation in the frame | Label |
+|---|---|
+| Ball and at least one player visible | **H** or **A**: the team of the player nearest to the ball |
+| Ball not visible | **D** |
+| Ball visible, no player visible | **X** |
+
+- Distances are in metres, using a fixed 105.3 m × 68.0 m pitch.
+- If two players are equally close, the one listed first in the XML wins.
+- Output frame = input frame − 1, so the CSV is indexed from 0, like video frames.
+
+## Output
+
+A CSV with exactly the columns `frame,label`, one row per tracking line, sorted by frame. Labels
+are only `H`, `A`, `D` or `X`. Before writing, the program checks for integer frames, repeated
+frames and invalid labels. Gaps in the input are not filled.
+
+Bad input stops the program with an explicit error instead of producing a wrong file: a missing
+or ambiguous tracking file, missing metadata, a team count other than two, a wrong slot count,
+malformed `x,y,speed` groups, and repeated or invalid frame numbers.
+
+---
+
+## Video player
+
+```bash
+python video_player.py <video> <labels.csv>
 ```
-games.py                    per-match constants, asset paths and the frame alignment
-evaluation/
-  possession_metrics.py     the metric library — every number on the board is defined here
-  run_evaluation.py         the scorer. This exact file produces the official result
-  validate_submission.py    check a file before you send it
-  gt/                       the public 5-minute ground truth
-  results/                  the four baselines; put your submissions here
-starter/
-  baseline.py               the reference baseline, numpy only
-  load_atd.py               read the tracking and line it up with video frames
-  load_smart_tagging.py     read the tactical tagging as video-frame intervals
-  load_homography.py        read the homography; project pitch <-> pixels
-  utils.py                  pitch plotting for the notebooks
-  01_smart_tagging.ipynb    guided tour of the tactical tagging
-  02_tracking_atd.ipynb     guided tour of the tracking data, with plots
-  03_first_submission.ipynb data in, scored submission out — start here
-data/                       unpack the downloaded match assets here. Empty in a fresh clone
+
+- Shows the current label, its name and the frame number over the video. Frames without a CSV
+  row show `?`.
+- The timeline bar can be clicked or dragged to jump anywhere. The time readout shows
+  `hh:mm:ss.mmm`.
+- It plays at the video's frame rate without skipping frames. The window is resizable and keeps
+  the aspect ratio.
+- It warns when the video and the CSV have different frame counts.
+- It only displays. The video is not changed or exported. The interface text is in Turkish.
+
+| Key | Action |
+|---|---|
+| Space | Play / pause |
+| Left / Right arrow | Jump 5 seconds |
+| A / D | Pause and step one frame |
+| Esc | Close |
+
+---
+
+## Using it as a library
+
+```python
+from src.enhanced_classifier import EnhancedPossessionClassifier
+
+c = EnhancedPossessionClassifier()
+frames, ball, players = c.load_tactical_data("path/to/folder")
+pred = c.classify_frames(frames, ball, players)   # frame, prediction, confidence
+csv = c.generate_submission(pred)                 # checked frame,label table
+c.get_statistics()                                # label shares, ball-tracking rate
 ```
 
-The scorer you run locally is the scorer that decides the competition. If it scores on your
-machine, it scores the same way on ours.
+`c.player_teams` maps each player id to H/A. The `confidence` column is a fixed score, not a
+probability, and is not written to the CSV.
 
 ---
 
-## Requirements
+## Limitations
 
-**Python 3.8 or newer.** The evaluation needs `numpy` and `pandas` and nothing else; it is tested
-under 3.8 and 3.11 and produces identical output under both. `starter/baseline.py` needs nothing
-more either — you can reach a scored submission without installing anything else.
-
-The notebooks additionally want `kloppy` and `matplotlib` (`requirements-starter.txt`), and
-**Python 3.9+ is recommended for those**: on Windows, installing Jupyter under 3.8 hits a
-`pywinpty` build failure that has nothing to do with this repository.
-
----
-
-## Timeline
-
-| |                |
-|---|----------------|
-| registration opens | **October 1, 2026** |
-| data released | **October 20, 2026** |
-| submission deadline | **November 17, 2026** |
-| results announced | **Before November 26, 2026**      |
+- **No real dead-ball detection.** `D` only means the ball has no tracked position. When the
+  ball is out of play but still tracked, the program still outputs H or A.
+- **No time logic.** There is no smoothing and no memory between frames, so the label can switch
+  teams from one frame to the next.
+- **Nearest is not possession.** The rule finds the team closest to the ball, not the team that
+  controls it.
+- **Tracking only.** Event tagging, homography, broadcast video and ball speed are not used.
+  Older loaders for event tagging and homography remain in the code but are never called.
+- `--device` is accepted but has no effect; everything runs on the CPU.
+- One match per run, and the whole tracking file is held in memory.
 
 ---
 
-## Questions
+## Background
 
-Open an issue for anything about the data, the metrics or the documentation — corrections are
-genuinely useful, and a fix that helps you helps everyone equally. For enrolment and the terms of
-use: **hackathon.talentarena@mobileworldcapital.com**.
+The project was built for the *More than a Hack 2027 — Phase 1: Ball Possession* challenge. The
+official challenge documents are kept unchanged in this folder: [CHALLENGE.md](CHALLENGE.md),
+[DATA.md](DATA.md), [EVALUATION.md](EVALUATION.md), [SUBMISSION.md](SUBMISSION.md),
+[RULES.md](RULES.md), [FAQ.md](FAQ.md) and [OVERVIEW.md](OVERVIEW.md). The official evaluator
+and starter code are in `evaluation/` and `starter/`. The challenge's original README is in git
+history: `git show 59da388:README.md`.
 
-## Licence and citation
-
-The code and documentation in this repository are released under the MIT Licence — see
-[LICENSE](LICENSE). **The match data is not covered by it**: it is separately licensed for this
-competition only, under the terms you accept at enrolment.
-
-```bibtex
-@misc{mtah2027,
-  title  = {More than a Hack 2027: Phase 1 - Ball Possession},
-  author = {Metrica Sports and FC Barcelona Innovation Hub},
-  year   = {2027},
-  url    = {https://github.com/metrica-sports/more-than-a-hack-2027}
-}
-```
+The match data is licensed separately for the competition and is not included in this repository.
