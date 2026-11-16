@@ -1,0 +1,9 @@
+# Ball Possession Classifier - Python dependencies
+# Install with: python -m pip install -r requirements.txt
+# Tested with Python 3.13, numpy 2.5.4 and pandas 3.1.1 (pandas 3.x needs Python 3.11+).
+
+numpy>=2.5
+pandas>=3.1
+
+# Optional: only for the local video player (video_player.py, not part of the repository)
+# opencv-python>=5.0

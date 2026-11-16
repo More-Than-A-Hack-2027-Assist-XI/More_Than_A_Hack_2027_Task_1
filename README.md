@@ -13,9 +13,12 @@ A full description of the program, including every error case, is in
 
 ## Quick start
 
-Requirements: Python 3 with `numpy` and `pandas`.
+Requirements: Python 3.11 or newer, with `numpy` and `pandas`.
 
 ```bash
+# Install the dependencies
+python -m pip install -r requirements.txt
+
 # Classify one match folder -> results/<video name>.csv
 python main.py --device cpu --data-dir <folder>
 
@@ -31,6 +34,7 @@ python main.py --device cpu --data-dir <folder> --output <file.csv>
 |---|---|
 | `main.py` | Command-line entry point. Finds the input files, loads them, classifies every frame and writes the CSV. |
 | `src/enhanced_classifier.py` | The engine: tracking parser, team mapping, decision rule and CSV checks. Can also be imported as a library. |
+| `requirements.txt` | Python dependencies (`numpy`, `pandas`). |
 | `Project_Report.pdf` | Detailed capability report. |
 
 ---
