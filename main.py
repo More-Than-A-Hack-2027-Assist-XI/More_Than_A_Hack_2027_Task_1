@@ -10,7 +10,7 @@ Usage:
 
     --help: Show usage information
 
-    --output: Path to save predictions CSV (default: results/<video name>.csv)
+    --output: Path to save predictions CSV (default: results/<match name>.csv)
     --data-dir: Path to tactical data directory (default: ./data/tactical)
 
 Author: AI Agent
@@ -28,25 +28,16 @@ sys.path.insert(0, str(Path(__file__).parent))
 from src.enhanced_classifier import EnhancedPossessionClassifier
 
 RESULTS_DIR = Path(__file__).resolve().parent / "results"
-VIDEO_EXTENSIONS = {".mp4", ".avi", ".mov", ".mkv", ".m4v", ".webm"}
 
 
 def default_output_path(data_dir: Path) -> Path:
-    """Return results/<video name>.csv for a data folder.
+    """Return results/<match name>.csv for a data folder.
 
-    The video name is the stem of the only video file in the folder. Without
-    exactly one video, it is the tracking file name without the "_atd"
-    suffix (BAR-ATH_tactical_atd.txt -> BAR-ATH_tactical), which follows the
-    same naming convention as the video.
+    The match name is the tracking file name without "_atd.txt"
+    (BAR-ATH_tactical_atd.txt -> results/BAR-ATH_tactical.csv).
     """
-    data_dir = Path(data_dir)
-    videos = sorted(p for p in data_dir.iterdir()
-                    if p.is_file() and p.suffix.lower() in VIDEO_EXTENSIONS)
-    if len(videos) == 1:
-        name = videos[0].stem
-    else:
-        tracking = sorted(data_dir.glob("*_atd.txt"))
-        name = tracking[0].name[:-len("_atd.txt")] if len(tracking) == 1 else "predictions"
+    tracking = sorted(Path(data_dir).glob("*_atd.txt"))
+    name = tracking[0].name[:-len("_atd.txt")] if len(tracking) == 1 else ""
     return RESULTS_DIR / f"{name or 'predictions'}.csv"
 
 
@@ -79,8 +70,8 @@ class BallPossessionClassifier:
         
         # Load tactical data
         print("\n[1/4] Loading tactical data...")
-        video_frames, ball_positions, player_positions = self.classifier.load_tactical_data(data_dir)
-        print(f"Loaded {len(video_frames)} video frames")
+        frames, ball_positions, player_positions = self.classifier.load_tactical_data(data_dir)
+        print(f"Loaded {len(frames)} frames")
         print(f"Ball positions tracked: {sum(pos is not None for pos in ball_positions.values())} frames")
         
         # Load team assignments from ATD XML (already done in load_tactical_data)
@@ -89,7 +80,7 @@ class BallPossessionClassifier:
         
         # Run classification
         print("\n[3/4] Running classification...")
-        predictions = self.classifier.classify_frames(video_frames, ball_positions, player_positions)
+        predictions = self.classifier.classify_frames(frames, ball_positions, player_positions)
         stats = self.classifier.get_statistics()
         print(f"Dead-ball stretches: {stats['dead_ball_stretches']}  "
               f"(Smart Tagging restarts available: {stats['restart_tags']})")
@@ -135,7 +126,7 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-    # Classify a match folder -> results/<video name>.csv
+    # Classify a match folder -> results/<match name>.csv
     python main.py --data-dir /path/to/match
 
     # Choose the output file yourself
@@ -159,7 +150,7 @@ Output format (one row per tracking frame, frames from 0):
         "--output",
         type=str,
         default=None,
-        help="Path to save predictions CSV (default: results/<video name>.csv)"
+        help="Path to save predictions CSV (default: results/<match name>.csv)"
     )
     
     parser.add_argument(

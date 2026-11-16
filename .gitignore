@@ -19,7 +19,7 @@ results/enhanced_classifier_submission.csv
 broadcast_results.csv
 tactical_results.csv
 
-# Generated predictions (main.py writes results/<video name>.csv)
+# Generated predictions (main.py writes results/<match name>.csv)
 results/
 
 # Local-only tools

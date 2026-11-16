@@ -1,13 +1,13 @@
 # Ball Possession Classifier
 
-Reads the player and ball tracking of one football match and labels **every video frame**:
+Reads the player and ball tracking of one football match and labels **every frame**:
 
 | Label | Meaning |
 |---|---|
 | `H` | the home team has the ball, ball in play |
 | `A` | the away team has the ball, ball in play |
 | `D` | dead ball: the ball is not in play |
-| `X` | no evidence for either team in this stretch |
+| `X` | the camera is not showing the game, or there is no evidence for either team |
 
 The result is a `frame,label` CSV with one row per frame. The program is rule-based: it needs no
 training, no labelled data and no GPU, and the same input always gives a byte-identical file.
@@ -22,14 +22,14 @@ Requirements: Python 3.11 or newer.
 ```bash
 python -m pip install -r requirements.txt     # numpy and pandas, pinned
 
-python main.py --data-dir <match folder>                        # -> results/<video name>.csv
+python main.py --data-dir <match folder>                        # -> results/<match name>.csv
 python main.py --data-dir <match folder> --output <file.csv>    # choose the file yourself
 ```
 
 | Option | Meaning | Default |
 |---|---|---|
 | `--data-dir` | folder with the match's tracking files | `./data/tactical` |
-| `--output` | where to write the CSV | `results/<video name>.csv` |
+| `--output` | where to write the CSV | `results/<match name>.csv` |
 
 ---
 
@@ -45,7 +45,8 @@ python main.py --data-dir <match folder> --output <file.csv>    # choose the fil
 4. **Write the CSV.** The labels are checked (integer frames, no duplicates, only H/A/D/X) and
    written with LF line endings. A missing output folder is created.
 
-A real run on a full match (about 2 h 15 min of video) takes about 15 seconds on a CPU:
+A real run on a full match (199,319 tracking frames, about 2 h 15 min) takes about 15 seconds on
+a CPU:
 
 ```text
 ============================================================
@@ -57,7 +58,7 @@ Output Path: ...\results\BAR-ATH_tactical.csv
 
 [1/4] Loading tactical data...
 Smart Tagging: BAR-ATH_tactical_smart_tagging.xml (59 restarts)
-Loaded 199319 video frames
+Loaded 199319 frames
 Ball positions tracked: 113488 frames
 
 [2/4] Team assignments loaded...
@@ -77,33 +78,32 @@ PIPELINE COMPLETE
 
 ### What the output looks like
 
-The CSV has one row per tracking frame, numbered from 0 like the video frames. Two excerpts from
+The CSV has one row per tracking frame, numbered from 0. Two excerpts from
 the run above. The first is a change of possession from the home to the away team, the second the
 ball going out of play:
 
 ```text
 frame,label          frame,label
-12623,H              17454,A
-12624,H              17455,A
-12625,A              17456,D
-12626,A              17457,D
+13669,H              17454,A
+13670,H              17455,A
+13671,A              17456,D
+13672,A              17457,D
 ```
 
 On that match the program produced:
 
 | Result | Value |
 |---|---|
-| Frames labelled H / A / D / X | 38.0% / 29.6% / 24.0% / 8.5% |
+| Frames labelled H / A / D / X | 37.8% / 28.7% / 24.0% / 9.4% |
 | Dead-ball stretches | 116: 81 after the ball left the pitch, 35 before restarts inside it |
 | Dead-ball stretch length | median 5.6 s, mean 16.5 s |
-| Possessions | 233, mean length 23 s |
+| Possessions | 240, mean length 22 s |
 
 About four out of five `X` frames are before kick-off, at half-time and after the final whistle,
 when nobody plays the ball.
 
-Without `--output`, the file is named after the video: the only video file in the data folder,
-otherwise the tracking file name without `_atd` (`match_tactical_atd.txt` →
-`results/match_tactical.csv`). `results/` is ignored by git.
+Without `--output`, the file is named after the tracking file without `_atd`
+(`match_tactical_atd.txt` → `results/match_tactical.csv`). `results/` is ignored by git.
 
 ---
 
@@ -132,8 +132,10 @@ Smart Tagging (opt.) ┘                                                  each s
 | ball out of the pitch | the ball is more than 0.5 m beyond a touchline or goal line |
 | kick | the ball is on the pitch and moving faster than 8 m/s, faster than anyone can carry it |
 | ball standing still | it moved less than 0.5 m during the last second |
-| player tempo | the median speed of all tracked players, averaged over 1 s; at 2 m/s or more the players are playing, below it they are walking |
-| close control | the nearest player to the ball is within 1.5 m; that player's team has close control in this frame |
+| player tempo | the median speed of all tracked players, averaged over 1 s; at 2 m/s or more the players are playing, below it they are walking. Frames with fewer than 3 players tracked are left out |
+| close control | the nearest player to the ball is within 1.5 m **and** the ball moves at dribbling pace (8 m/s or less); that player's team has close control in this frame. A ball flying past a player is not under control |
+| kicked away by | the nearest player is within 1.5 m and the ball leaves at 8 m/s or more: that player's team has just played the ball |
+| no view of the game | fewer than 3 players are tracked for at least 1 s: a close-up, a replay, the crowd or the VAR room. Any view of play shows more players, and shorter drops are tracking flicker |
 | tagged restart | the start of a Smart Tagging `SET PIECES` instance (corner kick, free kick, goal kick, kick-off, throw-in, penalty) |
 
 ### Step 1: dead-ball stretches (`D`)
@@ -166,19 +168,31 @@ penalties)
 
 Overlapping stretches are merged. Every frame inside a stretch is `D`.
 
+### Frames where the camera is not showing the game (`X`)
+
+A broadcast feed cuts to close-ups, replays, the crowd or the VAR room, and the tracking then sees
+only one or two people. Nothing can be said about possession there. Frames with no view of the
+game are therefore `X`, and the team in possession is **not** carried across them. After the cut,
+possession is decided afresh. The only exception is a cut inside a dead-ball stretch, such as a
+replay shown during a stoppage: there the label stays `D`, because the ball is dead.
+
 ### Step 2: possession in each stretch of play (`H` / `A`)
 
-Between two dead-ball stretches the ball is in play, so exactly one team has it.
+Between two dead-ball stretches or cuts away from the game, the ball is in play, so exactly one
+team has it.
 
 1. **Close-control evidence.** Each frame where one team has close control is evidence for that
-   team. Frames where nobody is within 1.5 m (a pass or clearance in flight, an untracked ball)
-   are no evidence for either side.
+   team. There is no evidence when nobody is within 1.5 m or the ball is moving fast. That covers
+   a pass or clearance in flight, a deflection and an untracked ball.
 2. **Runs.** The evidence frames are grouped into runs of the same team. A run of fewer than 3
    frames (0.12 s) is tracking noise and is dropped, so a run is not broken by such a blip.
-3. **Control.** A run with at least 25 evidence frames (1 s of close control) is control. It is
-   the conservative end of the challenge's proxy, "a player keeps the ball for a few seconds".
-   Passes between teammates keep the run going, because the run belongs to the team, not to one
-   player.
+3. **Control.** A run is control in either of two cases. Passes between teammates keep a run
+   going, because a run belongs to the team, not to one player.
+   - **The team keeps the ball:** at least 1 s of close control (dribbling, shielding).
+   - **A player receives the ball and plays it:** at least 0.2 s of close control, then the ball
+     is kicked away by the same team within 0.3 s. This is the quick trap-and-pass or
+     first-touch pass. A deflection cannot qualify, because the ball never slows down at the
+     player.
 4. **Labelling.** The first team with control owns the stretch from its first frame. Possession
    passes to the other team only when that team has control, and the change is **dated back to
    the first frame of that run**. The label therefore changes when the interception happened, not
@@ -193,9 +207,10 @@ Between two dead-ball stretches the ball is in play, so exactly one team has it.
 | Time | On the pitch | Evidence | Label |
 |---|---|---|---|
 | 0.0–4.0 s | a home player dribbles | home, close control | `H` |
-| 4.0–4.2 s | an away defender pokes the ball, the home player recovers it | away, 0.2 s: not control | `H` |
-| 4.2–7.0 s | long home pass, ball in the air | none | `H` |
-| 7.0–9.0 s | an away player intercepts and keeps the ball | away, 2 s: control | `A` from 7.0 s |
+| 4.0–4.1 s | a pass by the home team brushes an away defender's leg | ball fast: no evidence | `H` |
+| 4.1–7.0 s | the pass rolls loose, nobody near the ball | none | `H` |
+| 7.0–7.4 s | an away player runs onto it, takes it in his stride and passes forward | away, 0.4 s at his feet, then kicked away by him: control | `A` from 7.0 s |
+| 7.4–9.0 s | the away pass in the air, then an away teammate keeps the ball | away | `A` |
 | 9.0 s | the ball crosses the touchline | ball out | `D` from 9.0 s |
 | 9.0–15.0 s | the throw-in is prepared | — | `D` |
 | 15.0 s | the throw-in is taken, ball faster than 8 m/s | kick: restart | play from 15.0 s |
@@ -210,7 +225,10 @@ often it leaves the pitch or stands still). None was fitted to labels.
 | Parameter | Value | Meaning |
 |---|---|---|
 | `control_radius_m` | 1.5 m | about one stride, plus tracking noise |
-| `min_control_s` | 1.0 s | close control needed before possession changes hands |
+| `min_control_s` | 1.0 s | close control that counts as keeping the ball |
+| `control_max_speed_mps` | 8 m/s | a ball under control moves at dribbling pace at most |
+| `min_played_s` | 0.2 s | close control before a pass that counts as receiving the ball |
+| `played_window_s` | 0.3 s | the pass must follow within this time to count as playing it |
 | `noise_run_s` | 0.12 s | shorter runs are tracking noise |
 | `out_margin_m` | 0.5 m | the ball must be this far out (absorbs ball-position noise) |
 | `kick_speed_mps` | 8 m/s | a kicked or thrown ball |
@@ -220,6 +238,8 @@ often it leaves the pitch or stands still). None was fitted to labels.
 | `stoppage_lookback_s` | 30 s | how far back the start of a stoppage is searched |
 | `play_tempo_mps` | 2.0 m/s | median player speed of play rather than walking |
 | `resume_hold_s` | 2.0 s | how long that tempo must hold for play to count as resumed |
+| `min_players_in_view` | 3 | fewer tracked players means the camera is not showing the game |
+| `no_view_min_s` | 1.0 s | how long that must last; shorter drops are tracking flicker |
 
 ---
 
@@ -266,6 +286,7 @@ The `source` column explains each label:
 | `dead:restart` | dead ball before a restart inside the pitch |
 | `control` | possession from close control |
 | `weak` | stretch without 1 s of control, given to the team with the most evidence |
+| `no view` | the camera is not showing the game (`X`) |
 | `none` | no evidence (`X`) |
 
 ---
@@ -281,7 +302,10 @@ The `source` column explains each label:
   play.
 - **Nearest is not control.** In crowded duels the nearest player may not be the one with the
   ball.
-- The restarting team from Smart Tagging, the homography and the broadcast video are not used.
+- **A tackle can count as control** when the ball was slow at the tackler's feet for 0.2 s before
+  he played it away.
+- The algorithm uses tracking data and Smart Tagging only. The videos are never read, and the
+  homography and the restarting team from Smart Tagging are not used.
 - The program runs on the CPU, one match per run, and holds the whole tracking file in memory.
 
 ---

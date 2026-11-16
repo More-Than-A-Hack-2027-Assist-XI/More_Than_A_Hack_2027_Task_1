@@ -17,11 +17,15 @@ The decision is made over the whole match, not frame by frame:
      that is then kicked. The stoppage before it starts where the players
      stopped playing.
 2. Possession (H/A) between dead-ball stretches only changes hands when the
-   other team gains *controlled* possession: one of its players must be close
-   to the ball for a minimum accumulated time. Touches, deflections and balls
-   in flight do not change possession. A change is dated back to the start of
+   other team gains *controlled* possession: one of its players is at the ball
+   while it moves at dribbling pace, and the team either keeps it (1 s) or the
+   player receives it and plays it (0.2 s at his feet, then kicks it away).
+   Deflections, touches and balls in flight do not change possession. A change is dated back to the start of
    the controlling run, so there is no detection delay.
 3. When the ball is not tracked during play, the team in possession keeps it.
+4. When the camera does not show the game (fewer than 3 players tracked for at
+   least 1 s: close-ups, replays, crowd shots), the frames are X and possession
+   does not carry across them, unless they fall inside a dead-ball stretch.
 
 All constants have a physical or football meaning (see __init__) and were set
 from that meaning and from whole-match tracking statistics, not fitted to any
@@ -55,6 +59,9 @@ class EnhancedPossessionClassifier:
     def __init__(self,
                  control_radius_m: float = 1.5,
                  min_control_s: float = 1.0,
+                 control_max_speed_mps: float = 8.0,
+                 min_played_s: float = 0.2,
+                 played_window_s: float = 0.3,
                  noise_run_s: float = 0.12,
                  out_margin_m: float = 0.5,
                  kick_speed_mps: float = 8.0,
@@ -64,14 +71,23 @@ class EnhancedPossessionClassifier:
                  max_dead_s: float = 120.0,
                  stoppage_lookback_s: float = 30.0,
                  play_tempo_mps: float = 2.0,
-                 resume_hold_s: float = 2.0):
+                 resume_hold_s: float = 2.0,
+                 min_players_in_view: int = 3,
+                 no_view_min_s: float = 1.0):
         """
         Args:
             control_radius_m: a player this close to the ball can be playing it
                 (about one stride, plus tracking noise).
-            min_control_s: accumulated close-control time a team needs before
-                possession passes to it. The rules call a reception controlled
-                when the player keeps the ball; 1 s is the conservative end.
+            min_control_s: close control a team needs before possession passes
+                to it when the player keeps the ball (dribbling, shielding).
+            control_max_speed_mps: a frame is control evidence only while the
+                ball moves at most this fast. A controlled ball slows to
+                dribbling pace; a deflected or passing ball keeps its speed.
+            min_played_s, played_window_s: a shorter run is still control when
+                the player received the ball (at least min_played_s at his feet
+                at dribbling pace) and then played it: the same team kicks it
+                away within played_window_s. A deflection never slows down at
+                the player, so it cannot qualify.
             noise_run_s: runs of a team near the ball shorter than this (3 frames)
                 are treated as tracking noise.
             out_margin_m: the ball counts as out of the pitch when it is this far
@@ -87,9 +103,17 @@ class EnhancedPossessionClassifier:
             play_tempo_mps: median player speed above which the players are playing
                 rather than walking through a stoppage.
             resume_hold_s: how long that tempo must hold to count as play resumed.
+            min_players_in_view: with fewer tracked players the camera is not
+                showing the game (a close-up, a replay or the crowd); any view
+                of play shows more.
+            no_view_min_s: such a view must last this long; shorter drops are
+                tracking flicker and are ignored.
         """
         self.control_radius_m = control_radius_m
         self.min_control_s = min_control_s
+        self.control_max_speed_mps = control_max_speed_mps
+        self.min_played_s = min_played_s
+        self.played_window_s = played_window_s
         self.noise_run_s = noise_run_s
         self.out_margin_m = out_margin_m
         self.kick_speed_mps = kick_speed_mps
@@ -100,6 +124,8 @@ class EnhancedPossessionClassifier:
         self.stoppage_lookback_s = stoppage_lookback_s
         self.play_tempo_mps = play_tempo_mps
         self.resume_hold_s = resume_hold_s
+        self.min_players_in_view = min_players_in_view
+        self.no_view_min_s = no_view_min_s
 
         # Pitch size in metres (normalised coordinates are multiplied by these).
         self.pitch_length = 105.3
@@ -115,7 +141,7 @@ class EnhancedPossessionClassifier:
 
     # ------------------------------------------------------------------ loading
     def load_tactical_data(self, data_dir):
-        """Load tracking (and Smart Tagging, if present) on the zero-based video timeline."""
+        """Load tracking (and Smart Tagging, if present) on a zero-based frame timeline."""
         data_dir = Path(data_dir)
         candidates = sorted(data_dir.glob('*_atd.txt'))
         if len(candidates) == 0:
@@ -198,7 +224,7 @@ class EnhancedPossessionClassifier:
         return others[0] if len(others) == 1 else None
 
     def load_restart_tags(self, xml_path) -> List[Tuple[int, str]]:
-        """Set-piece instances as (video frame of the restart, restart type)."""
+        """Set-piece instances as (frame of the restart, restart type)."""
         restarts = []
         for inst in ET.parse(xml_path).getroot().iter('instance'):
             code = (inst.findtext('code') or '').strip().lower()
@@ -228,7 +254,7 @@ class EnhancedPossessionClassifier:
         return best_id, self.player_teams.get(best_id)
 
     def _arrays(self, frames, ball, players):
-        """Dense per-frame arrays (metres) indexed by video frame."""
+        """Dense per-frame arrays (metres) indexed by frame."""
         n = max(frames) + 1
         slots = {pid: i for i, pid in enumerate(self.track_ids)}
         bx = np.full(n, np.nan); by = np.full(n, np.nan)
@@ -249,9 +275,9 @@ class EnhancedPossessionClassifier:
         return n, bx, by, px, py, ps, team
 
     # ------------------------------------------------------------ classifier
-    def classify_frames(self, video_frames, ball_positions_dict, player_positions_dict, **_ignored):
+    def classify_frames(self, frames_in, ball_positions_dict, player_positions_dict, **_ignored):
         """Label every frame. Returns DataFrame(frame, prediction, source)."""
-        frames = sorted(video_frames)
+        frames = sorted(frames_in)
         if not frames:
             return pd.DataFrame(columns=['frame', 'prediction', 'source'])
         n, bx, by, px, py, ps, team = self._arrays(frames, ball_positions_dict, player_positions_dict)
@@ -260,6 +286,18 @@ class EnhancedPossessionClassifier:
         L, W = self.pitch_length, self.pitch_width
 
         vis = np.isfinite(bx)
+        # Camera not showing the game: too few players tracked, for long enough.
+        few = np.isfinite(px).sum(axis=1) < self.min_players_in_view
+        off_view = np.zeros(n, bool)
+        run_start = None
+        for f in range(n + 1):
+            if f < n and few[f]:
+                if run_start is None:
+                    run_start = f
+            elif run_start is not None:
+                if f - run_start >= sec(self.no_view_min_s):
+                    off_view[run_start:f] = True
+                run_start = None
         # Ball speed from positions, central difference over 0.16 s.
         speed = np.full(n, np.nan)
         speed[2:-2] = np.hypot(bx[4:] - bx[:-4], by[4:] - by[:-4]) / (4 / fps)
@@ -275,7 +313,8 @@ class EnhancedPossessionClassifier:
 
         with warnings.catch_warnings():
             warnings.simplefilter('ignore', category=RuntimeWarning)
-            tempo = np.nanmedian(ps, axis=1)
+            # A close-up's one or two players say nothing about the tempo of play.
+            tempo = np.nanmedian(np.where(few[:, None], np.nan, ps), axis=1)
         tempo = pd.Series(tempo).rolling(sec(1.0), min_periods=1).mean().to_numpy()
         playing = tempo >= self.play_tempo_mps
         hold = sec(self.resume_hold_s)
@@ -367,18 +406,33 @@ class EnhancedPossessionClassifier:
         d2 = np.where(valid, (px - bx[:, None]) ** 2 + (py - by[:, None]) ** 2, np.inf)
         nearest = d2.argmin(axis=1)
         near_d = np.sqrt(d2[np.arange(n), nearest])
-        cand = np.where(near_d <= self.control_radius_m, team[nearest], '')
+        # Control evidence: a player at the ball, and the ball at dribbling pace
+        # (unknown speed at the edge of a tracked stretch is not held against it).
+        slow = ~(speed > self.control_max_speed_mps)
+        at_ball = near_d <= self.control_radius_m
+        cand = np.where(at_ball & slow, team[nearest], '')
+        # The team whose player kicks the ball away in this frame.
+        kicked_by = np.where(at_ball & (speed >= self.kick_speed_mps), team[nearest], '')
 
-        bounds, prev = [], 0
-        for a, b, _ in flat:
-            if a > prev:
-                bounds.append((prev, a))
-            prev = max(prev, b)
-        if prev < n:
-            bounds.append((prev, n))
+        # Frames without a view of the game are X, except inside a dead-ball stretch.
+        no_view = off_view & (label != 'D')
+        label[no_view] = 'X'
+        source[no_view] = 'no view'
+
+        # Stretches of play: neither dead ball nor out of view.
+        blocked = (label == 'D') | no_view
+        bounds, a = [], None
+        for f in range(n + 1):
+            if f < n and not blocked[f]:
+                if a is None:
+                    a = f
+            elif a is not None:
+                bounds.append((a, f))
+                a = None
         need, noise = sec(self.min_control_s), sec(self.noise_run_s)
+        played = (sec(self.min_played_s), sec(self.played_window_s), kicked_by)
         for a, b in bounds:
-            self._label_segment(a, b, cand, label, source, need, noise)
+            self._label_segment(a, b, cand, label, source, need, noise, played)
 
         frame_set = np.array(frames)
         result = pd.DataFrame({'frame': frame_set,
@@ -390,25 +444,37 @@ class EnhancedPossessionClassifier:
         return result
 
     @staticmethod
-    def _label_segment(a, b, cand, label, source, need, noise):
+    def _label_segment(a, b, cand, label, source, need, noise, played):
         """Possession within one stretch of play [a, b)."""
         idx = [f for f in range(a, b) if cand[f] in ('H', 'A')]
         if not idx:
             return                                     # no evidence: stays X
-        runs = []                                      # [team, first frame, count]
+        runs = []                                      # [team, first, count, last]
         for f in idx:
             if runs and runs[-1][0] == cand[f]:
                 runs[-1][2] += 1
+                runs[-1][3] = f
             else:
-                runs.append([cand[f], f, 1])
+                runs.append([cand[f], f, 1, f])
         runs = [r for r in runs if r[2] >= noise]      # drop tracking-noise blips
         merged = []
         for r in runs:
             if merged and merged[-1][0] == r[0]:
                 merged[-1][2] += r[2]
+                merged[-1][3] = r[3]
             else:
                 merged.append(list(r))
-        control = [r for r in merged if r[2] >= need]
+
+        min_played, window, kicked_by = played
+
+        def is_control(team, _first, count, last):
+            if count >= need:                          # kept the ball
+                return True
+            # received the ball and played it: the same team kicks it away
+            after = kicked_by[last + 1:min(b, last + 1 + window)]
+            return count >= min_played and bool((after == team).any())
+
+        control = [r for r in merged if is_control(*r)]
         if not control:
             totals = {t: sum(r[2] for r in merged if r[0] == t) for t in ('H', 'A')}
             best = max(totals, key=lambda t: totals[t]) if merged else cand[idx[0]]
@@ -416,7 +482,7 @@ class EnhancedPossessionClassifier:
             source[a:b] = 'weak'
             return
         current, start = control[0][0], a
-        for team, first, _ in control[1:]:
+        for team, first, _, _ in control[1:]:
             if team != current:
                 label[start:first] = current
                 source[start:first] = 'control'
