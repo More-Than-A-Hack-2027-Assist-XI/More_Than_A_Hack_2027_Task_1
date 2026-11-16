@@ -11,7 +11,7 @@ Usage:
     --help: Show usage information
     
     --device: Device to run inference on (cuda or cpu, default: cuda)
-    --output: Path to save predictions CSV (default: predictions.csv)
+    --output: Path to save predictions CSV (default: results/<video name>.csv)
     --data-dir: Path to tactical data directory (default: ./data/tactical)
 
 Author: AI Agent
@@ -19,7 +19,6 @@ Date: 2026-11-15
 """
 
 import argparse
-import os
 import sys
 from pathlib import Path
 import pandas as pd
@@ -29,76 +28,27 @@ sys.path.insert(0, str(Path(__file__).parent))
 
 from src.enhanced_classifier import EnhancedPossessionClassifier
 
+RESULTS_DIR = Path(__file__).resolve().parent / "results"
+VIDEO_EXTENSIONS = {".mp4", ".avi", ".mov", ".mkv", ".m4v", ".webm"}
 
-def discover_files_in_directory(data_dir: Path) -> dict:
+
+def default_output_path(data_dir: Path) -> Path:
+    """Return results/<video name>.csv for a data folder.
+
+    The video name is the stem of the only video file in the folder. Without
+    exactly one video, it is the tracking file name without the "_atd"
+    suffix (BAR-ATH_tactical_atd.txt -> BAR-ATH_tactical), which follows the
+    same naming convention as the video.
     """
-    Discover and identify tactical data files in a directory.
-    
-    Args:
-        data_dir: Directory to search for tactical data files
-        
-    Returns:
-        Dictionary mapping file type to discovered file paths
-    """
-    files = {
-        'atd_tracking': None,
-        'smart_tagging': None,
-        'atd_xml': None,
-        'homography': None,
-        'ground_truth': None
-    }
-    
-    # Patterns to match different dataset naming conventions
-    patterns = {
-        'atd_tracking': [
-            'BAR-ATH_tactical_atd.txt',
-            'M4-ATH_tactical_atd.txt', 
-            'RIFLE-ATH_tactical_atd.txt',
-            'tactical_atd.txt',
-            'tracking_data.txt'
-        ],
-        'smart_tagging': [
-            'BAR-ATH_tactical_smart_tagging.xml',
-            'M4-ATH_tactical_smart_tagging.xml',
-            'RIFLE-ATH_tactical_smart_tagging.xml',
-            'smart_tagging.xml',
-            'events.xml'
-        ],
-        'atd_xml': [
-            'BAR-ATH_tactical_atd.xml',
-            'M4-ATH_tactical_atd.xml',
-            'RIFLE-ATH_tactical_atd.xml',
-            'atd.xml',
-            'tracking.xml'
-        ],
-        'homography': [
-            'BAR-ATH_tactical_homography.csv',
-            'M4-ATH_tactical_homography.csv',
-            'RIFLE-ATH_tactical_homography.csv',
-            'homography.csv',
-            'camera_calibration.csv'
-        ],
-        'ground_truth': [
-            'ground_truth_public.csv',
-            'ground_truth.csv',
-            'gt_public.csv',
-            'labels.csv'
-        ]
-    }
-    
-    # Walk through directory and subdirectories
-    for root, dirs, filenames in os.walk(data_dir):
-        for filename in filenames:
-            # Check each pattern category
-            for file_type, file_patterns in patterns.items():
-                if filename in file_patterns:
-                    file_path = Path(root) / filename
-                    if files[file_type] is None:
-                        files[file_type] = file_path
-                    else:
-                        print(f"Warning: Multiple {file_type} files found. Using first: {files[file_type]}")
-    
-    return files
+    data_dir = Path(data_dir)
+    videos = sorted(p for p in data_dir.iterdir()
+                    if p.is_file() and p.suffix.lower() in VIDEO_EXTENSIONS)
+    if len(videos) == 1:
+        name = videos[0].stem
+    else:
+        tracking = sorted(data_dir.glob("*_atd.txt"))
+        name = tracking[0].name[:-len("_atd.txt")] if len(tracking) == 1 else "predictions"
+    return RESULTS_DIR / f"{name or 'predictions'}.csv"
 
 
 class BallPossessionClassifier:
@@ -175,7 +125,9 @@ class BallPossessionClassifier:
         # Generate submission-ready DataFrame from classifier
         submission_df = self.classifier.generate_submission(predictions)
         
-        # Save to CSV
+        # Save to CSV, creating the output folder if needed
+        output_path = Path(output_path)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
         submission_df.to_csv(output_path, index=False)
         
         return submission_df
@@ -195,7 +147,7 @@ Examples:
     # Run with CPU device
     python main.py --device cpu
     
-    # Specify output path
+    # Specify output path (default: results/<video name>.csv)
     python main.py --output my_predictions.csv
     
     # Specify custom data directory
@@ -230,8 +182,8 @@ Expected output format:
     parser.add_argument(
         "--output",
         type=str,
-        default="predictions.csv",
-        help="Path to save predictions CSV (default: predictions.csv)"
+        default=None,
+        help="Path to save predictions CSV (default: results/<video name>.csv)"
     )
     
     parser.add_argument(
@@ -248,7 +200,7 @@ Expected output format:
         print(f"Error: Data directory '{args.data_dir}' does not exist.")
         sys.exit(1)
     
-    output_path = Path(args.output)
+    output_path = Path(args.output) if args.output else default_output_path(Path(args.data_dir))
     
     # Create classifier and run pipeline
     classifier = BallPossessionClassifier(device=args.device)

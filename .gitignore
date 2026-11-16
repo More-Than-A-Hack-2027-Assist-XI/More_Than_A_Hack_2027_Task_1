@@ -18,3 +18,12 @@ predictions.csv
 results/enhanced_classifier_submission.csv
 broadcast_results.csv
 tactical_results.csv
+
+# Generated predictions (main.py writes results/<video name>.csv)
+results/
+
+# Local-only tools
+video_player.py
+
+# Local editor workspace (contains a machine-specific interpreter path)
+*.code-workspace

@@ -1,8 +1,7 @@
 # Ball Possession Classifier
 
 Reads the player and ball tracking of one football match and decides, **frame by frame, which
-team is closest to the ball**. The result is a `frame,label` CSV. A separate video player shows
-those labels on top of the match video so you can check them by eye.
+team is closest to the ball**. The result is a `frame,label` CSV.
 
 It is rule-based: no training, no labelled data, no GPU. It works on any match whose tracking is
 in the format below, whatever the file and folder names are.
@@ -14,21 +13,15 @@ A full description of the program, including every error case, is in
 
 ## Quick start
 
-Requirements: Python 3 with `numpy` and `pandas`. The video player also needs `opencv-python`
-and Tkinter (included with standard Python on Windows).
+Requirements: Python 3 with `numpy` and `pandas`.
 
 ```bash
-# Classify one match folder
+# Classify one match folder -> results/<video name>.csv
+python main.py --device cpu --data-dir <folder>
+
+# Or choose the output file yourself
 python main.py --device cpu --data-dir <folder> --output <file.csv>
-
-# Watch the labels on the video
-python video_player.py <video.mp4> <file.csv> [--max-width 1280]
-
-# Run the regression tests
-python -m unittest test_generic_inputs -v
 ```
-
-The output folder must already exist.
 
 ---
 
@@ -38,9 +31,6 @@ The output folder must already exist.
 |---|---|
 | `main.py` | Command-line entry point. Finds the input files, loads them, classifies every frame and writes the CSV. |
 | `src/enhanced_classifier.py` | The engine: tracking parser, team mapping, decision rule and CSV checks. Can also be imported as a library. |
-| `video_player.py` | Desktop player that shows each frame's label over the video, with seeking and frame stepping. |
-| `test_generic_inputs.py` | 8 regression tests on small synthetic inputs. |
-| `diagnostic_supervised.py` | Self-check against an independent re-parse of a real tracking file. Written for one specific data file. |
 | `Project_Report.pdf` | Detailed capability report. |
 
 ---
@@ -81,37 +71,19 @@ Every frame is decided on its own:
 
 ## Output
 
-A CSV with exactly the columns `frame,label`, one row per tracking line, sorted by frame. Labels
+Without `--output`, the CSV is written to `results/<video name>.csv` in the project folder. The
+video name is the name of the video file in the data folder, if there is exactly one. Otherwise
+it is the tracking file name without `_atd`: for example, `match_tactical_atd.txt` gives
+`results/match_tactical.csv`. Missing output folders are created automatically. `results/` is
+ignored by git.
+
+The file has exactly the columns `frame,label`, one row per tracking line, sorted by frame. Labels
 are only `H`, `A`, `D` or `X`. Before writing, the program checks for integer frames, repeated
 frames and invalid labels. Gaps in the input are not filled.
 
 Bad input stops the program with an explicit error instead of producing a wrong file: a missing
 or ambiguous tracking file, missing metadata, a team count other than two, a wrong slot count,
 malformed `x,y,speed` groups, and repeated or invalid frame numbers.
-
----
-
-## Video player
-
-```bash
-python video_player.py <video> <labels.csv>
-```
-
-- Shows the current label, its name and the frame number over the video. Frames without a CSV
-  row show `?`.
-- The timeline bar can be clicked or dragged to jump anywhere. The time readout shows
-  `hh:mm:ss.mmm`.
-- It plays at the video's frame rate without skipping frames. The window is resizable and keeps
-  the aspect ratio.
-- It warns when the video and the CSV have different frame counts.
-- It only displays. The video is not changed or exported. The interface text is in Turkish.
-
-| Key | Action |
-|---|---|
-| Space | Play / pause |
-| Left / Right arrow | Jump 5 seconds |
-| A / D | Pause and step one frame |
-| Esc | Close |
 
 ---
 
@@ -150,10 +122,8 @@ probability, and is not written to the CSV.
 ## Background
 
 The project was built for the *More than a Hack 2027 — Phase 1: Ball Possession* challenge. The
-official challenge documents are kept unchanged in this folder: [CHALLENGE.md](CHALLENGE.md),
-[DATA.md](DATA.md), [EVALUATION.md](EVALUATION.md), [SUBMISSION.md](SUBMISSION.md),
-[RULES.md](RULES.md), [FAQ.md](FAQ.md) and [OVERVIEW.md](OVERVIEW.md). The official evaluator
-and starter code are in `evaluation/` and `starter/`. The challenge's original README is in git
-history: `git show 59da388:README.md`.
+challenge kit and the earlier development files are no longer in the working tree. They remain
+in git history; for example, the challenge's original README can be shown with
+`git show 59da388:README.md`.
 
 The match data is licensed separately for the competition and is not included in this repository.
