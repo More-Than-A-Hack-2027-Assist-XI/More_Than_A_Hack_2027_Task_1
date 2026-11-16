@@ -6,11 +6,10 @@ This script provides the main entry point for the Ball Possession Classification
 It integrates all modules (EnhancedClassifier, data loaders) into a unified workflow.
 
 Usage:
-    python main.py --device cuda/cpu --output <path> --data-dir <path>
-    
+    python main.py --data-dir <path> [--output <path>]
+
     --help: Show usage information
-    
-    --device: Device to run inference on (cuda or cpu, default: cuda)
+
     --output: Path to save predictions CSV (default: results/<video name>.csv)
     --data-dir: Path to tactical data directory (default: ./data/tactical)
 
@@ -59,16 +58,8 @@ class BallPossessionClassifier:
     It provides a clean interface for running the complete pipeline from data loading to prediction generation.
     """
     
-    def __init__(self, device: str = "cpu"):
-        """
-        Initialize the BallPossessionClassifier.
-        
-        Args:
-            device: Device to run inference on (cuda or cpu)
-        """
-        self.device = device
-        # EnhancedPossessionClassifier doesn't use device parameter directly
-        # It handles device internally when needed
+    def __init__(self):
+        """Initialize the pipeline. Everything runs on the CPU."""
         self.classifier = EnhancedPossessionClassifier()
     
     def run_pipeline(self, data_dir: Path, output_path: Path) -> None:
@@ -82,7 +73,6 @@ class BallPossessionClassifier:
         print("=" * 60)
         print("BALL POSSESSION CLASSIFICATION PIPELINE")
         print("=" * 60)
-        print(f"Device: {self.device}")
         print(f"Data Directory: {data_dir}")
         print(f"Output Path: {output_path}")
         print("=" * 60)
@@ -99,7 +89,10 @@ class BallPossessionClassifier:
         
         # Run classification
         print("\n[3/4] Running classification...")
-        predictions = self.classifier.classify_frames(video_frames, ball_positions, player_positions, smart_tags=self.classifier.smart_tags, homographies=self.classifier.homographies)
+        predictions = self.classifier.classify_frames(video_frames, ball_positions, player_positions)
+        stats = self.classifier.get_statistics()
+        print(f"Dead-ball stretches: {stats['dead_ball_stretches']}  "
+              f"(Smart Tagging restarts available: {stats['restart_tags']})")
         print(f"Classification complete. Generated {len(predictions)} predictions")
         
         # Generate submission CSV
@@ -128,7 +121,8 @@ class BallPossessionClassifier:
         # Save to CSV, creating the output folder if needed
         output_path = Path(output_path)
         output_path.parent.mkdir(parents=True, exist_ok=True)
-        submission_df.to_csv(output_path, index=False)
+        # "\n" on every OS, so the same input gives a byte-identical file everywhere.
+        submission_df.to_csv(output_path, index=False, lineterminator="\n")
         
         return submission_df
 
@@ -141,44 +135,26 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-    # Run with default settings (CUDA device)
-    python main.py
-    
-    # Run with CPU device
-    python main.py --device cpu
-    
-    # Specify output path (default: results/<video name>.csv)
-    python main.py --output my_predictions.csv
-    
-    # Specify custom data directory
-    python main.py --data-dir /path/to/data/tactical
-    
-    # Full command
-    python main.py --device cuda --output predictions.csv --data-dir ./data/tactical
+    # Classify a match folder -> results/<video name>.csv
+    python main.py --data-dir /path/to/match
+
+    # Choose the output file yourself
+    python main.py --data-dir /path/to/match --output my_predictions.csv
 
 The pipeline will:
-    1. Load tactical video frames and ATD tracking data
-    2. Load team assignments from ATD XML
-    3. Run ball possession classification using EnhancedClassifier
-    4. Generate submission CSV with frame and label columns
-    5. Save predictions to the specified output path
+    1. Load the tracking (*_atd.txt + *_atd.xml) and, if present, Smart Tagging
+    2. Load team assignments from the tracking metadata
+    3. Find dead-ball stretches and decide possession between them
+    4. Write a CSV with frame and label columns
 
-Expected output format:
+Output format (one row per tracking frame, frames from 0):
     frame,label
-    11185,H
-    11186,A
+    0,X
+    1,H
     ...
         """
     )
-    
-    parser.add_argument(
-        "--device",
-        type=str,
-        default="cuda",
-        choices=["cuda", "cpu"],
-        help="Device to run inference on (cuda or cpu, default: cuda)"
-    )
-    
+
     parser.add_argument(
         "--output",
         type=str,
@@ -203,7 +179,7 @@ Expected output format:
     output_path = Path(args.output) if args.output else default_output_path(Path(args.data_dir))
     
     # Create classifier and run pipeline
-    classifier = BallPossessionClassifier(device=args.device)
+    classifier = BallPossessionClassifier()
     classifier.run_pipeline(Path(args.data_dir), output_path)
 
 
