@@ -24,6 +24,3 @@ results/
 
 # Local-only tools
 video_player.py
-
-# Local editor workspace (contains a machine-specific interpreter path)
-*.code-workspace

@@ -1,0 +1,25 @@
+{
+	"folders": [
+		{
+			"path": "."
+		}
+	],
+	"settings": {
+		// Python 3.13 is the interpreter that has pandas, numpy and opencv-python installed.
+		// The py launcher's default (3.15) has none of them, which caused the Pylance
+		// "could not be resolved" errors for pandas and cv2.
+		"python.defaultInterpreterPath": "C:\\Program Files\\Python313\\python.exe",
+		"python.analysis.extraPaths": [
+			"${workspaceFolder}"
+		],
+		"files.exclude": {
+			"**/__pycache__": true
+		}
+	},
+	"extensions": {
+		"recommendations": [
+			"ms-python.python",
+			"ms-python.vscode-pylance"
+		]
+	}
+}
